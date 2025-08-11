@@ -1,0 +1,154 @@
+INSTALL GRAFANA AND PROMETHESUS USING TWO VM
+
+
+Overview
+•	VM1 = Prometheus + Grafana (monitoring server)
+•	VM2 = Node Exporter (target to monitor)
+
+Step 1: Launch 2 RHEL EC2 Instances
+1. Go to AWS Console → EC2 → Launch Instance
+•	Name: RHEL-VM1 and RHEL-VM2
+•	AMI: Choose Red Hat Enterprise Linux 8 (Free tier eligible)
+•	Instance type: t2.micro
+•	Key pair: Select or create .pem file (e.g., rhel-key.pem)
+•	Network settings:
+o	Edit Security Group:
+	✅ Port 22 → SSH (for both VMs)
+	✅ Port 9090 → Prometheus (VM1)
+	✅ Port 3000 → Grafana (VM1)
+	✅ Port 9100 → Node Exporter (VM2)
+2. Launch both instances
+Get the public IP of VM1 and private IP of VM2 (you’ll need these later).
+
+ Step 2: Connect to Both VMs via SSH
+Using Putty and puttygen 
+Step 3: Install Prometheus on VM1
+1. Create required folders and user:
+sudo useradd --no-create-home --shell /bin/false prometheus
+sudo mkdir /etc/prometheus /var/lib/prometheus
+2. Download and extract Prometheus:
+curl -LO https://github.com/prometheus/prometheus/releases/download/v2.52.0/prometheus-2.52.0.linux-amd64.tar.gz
+tar -xvf prometheus-2.52.0.linux-amd64.tar.gz
+cd prometheus-2.52.0.linux-amd64
+3. Move binaries:
+sudo cp prometheus promtool /usr/local/bin/
+sudo cp -r consoles console_libraries /etc/prometheus
+sudo cp prometheus.yml /etc/prometheus/
+sudo chown -R prometheus:prometheus /etc/prometheus /var/lib/prometheus
+4. Create Prometheus service file:
+sudo vi /etc/systemd/system/prometheus.service
+Paste:
+[Unit]
+Description=Prometheus Monitoring
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+User=prometheus
+ExecStart=/usr/local/bin/prometheus \
+  --config.file=/etc/prometheus/prometheus.yml \
+  --storage.tsdb.path=/var/lib/prometheus
+
+[Install]
+WantedBy=multi-user.target
+
+5. Start Prometheus:
+sudo systemctl daemon-reexec
+sudo systemctl daemon-reload
+sudo systemctl enable prometheus
+sudo systemctl start prometheus
+6. Test Prometheus in browser:
+Open:
+http://<VM1-PUBLIC-IP>:9090
+
+Step 4: Install Grafana on VM1
+1. Add Grafana repo:
+sudo tee /etc/yum.repos.d/grafana.repo<<EOF
+[grafana]
+name=Grafana OSS
+baseurl=https://packages.grafana.com/oss/rpm
+repo_gpgcheck=1
+enabled=1
+gpgcheck=1
+gpgkey=https://packages.grafana.com/gpg.key
+EOF
+2. Install and start Grafana:
+sudo yum install grafana -y
+sudo systemctl enable grafana-server
+sudo systemctl start grafana-server
+3. Access Grafana:
+In browser:
+http://<VM1-PUBLIC-IP>:3000
+•	Username: admin
+•	Password: admin (it will ask to change on first login)
+
+ Step 5: Install Node Exporter on VM2
+1. Download and extract:
+curl -LO https://github.com/prometheus/node_exporter/releases/download/v1.8.1/node_exporter-1.8.1.linux-amd64.tar.gz
+tar -xvf node_exporter-1.8.1.linux-amd64.tar.gz
+cd node_exporter-1.8.1.linux-amd64
+sudo cp node_exporter /usr/local/bin/
+2. Create service file:
+sudo vi /etc/systemd/system/node_exporter.service
+Paste:
+[Unit]
+Description=Node Exporter
+After=network.target
+
+[Service]
+User=nobody
+ExecStart=/usr/local/bin/node_exporter
+
+[Install]
+WantedBy=multi-user.target
+3. Start node exporter:
+sudo systemctl daemon-reload
+sudo systemctl enable node_exporter
+sudo systemctl start node_exporter
+4. Test:
+curl http://localhost:9100/metrics
+
+Step 6: Connect Prometheus to VM2
+1. On VM1, edit config:
+sudo vi /etc/prometheus/prometheus.yml
+Under scrape_configs, add this:
+scrape_configs:
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  - job_name: 'rhel-vm2-node'
+    static_configs:
+      - targets: ['privateip:9100']
+Save and restart Prometheus:
+sudo systemctl restart prometheus
+Check Prometheus UI → Status → Targets
+You should see VM2 as "UP".
+
+
+
+
+
+
+
+
+
+
+
+
+Step 7: Connect Grafana to Prometheus
+1.	Open Grafana → Settings → Data Sources
+2.	Click Add data source → Prometheus
+3.	URL: http://localhost:9090
+4.	Click Save & Test
+
+Step 8: Create Dashboard in Grafana
+1.	Click + → Dashboard → Add new panel
+2.	In Query, select:
+node_cpu_seconds_total
+or try:
+node_memory_MemAvailable_bytes
+3.	Click Apply to save the panel.
+Import dashboard
+Link : https://grafana.com/grafana/dashboards/1860-node-exporter-full/
+
